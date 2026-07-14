@@ -89,8 +89,14 @@ services:
 
   prefect-prometheus-exporter:
     image: prefecthq/prometheus-prefect-exporter:3.6.1
+    depends_on:
+      prefect-server:
+        condition: service_healthy
     environment:
       PREFECT_API_URL: http://prefect-server:4200/api
+    ports:
+      - "8080:8080"
+    restart: on-failure
 
   loki:
     image: grafana/loki:3.7.2
@@ -127,9 +133,29 @@ services:
     ports:
       - "3000:3000"
 
+  clickhouse:
+    image: clickhouse:26.5.5.8
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    environment:
+      CLICKHOUSE_DB: pipeline
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--user=clickhouse", "--password=clickhouse", "--query", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
 volumes:
   postgres_data:
   redis_data:
   prometheus_data:
   loki_data:
   grafana_data:
+  clickhouse_data:

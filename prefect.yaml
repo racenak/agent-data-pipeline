@@ -3,3 +3,8 @@ deployments:
     entrypoint: flow/hello-world.py:hello
     work_pool:
       name: local-pool
+
+  - name: etl
+    entrypoint: flow/etl.py:main_etl_flow
+    work_pool:
+      name: local-pool

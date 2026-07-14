@@ -14,6 +14,9 @@ dependencies = [
     "structlog>=24.0.0",
     "Pillow>=10.0.0",
     "Prefect>=3.7.8",
+    "sqlalchemy>=2.0.0",
+    "clickhouse-sqlalchemy>=0.6.0",
+    "httpx>=0.27.0",
 ]
 
 [project.optional-dependencies]
