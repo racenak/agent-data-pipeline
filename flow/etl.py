@@ -1,6 +1,10 @@
 import httpx
 from prefect import flow, task, get_run_logger
-from clickhouse_driver import Client
+from sqlalchemy import create_engine, text
+
+# 1. SETUP ENGINE (Adjust connection string to match your credentials/host)
+DATABASE_URL = "clickhousedb://clickhouse:clickhouse@clickhouse:8123/pipeline?compression=zstd"
+engine = create_engine(DATABASE_URL)
 
 # ---------------------------------------------------------------------------- #
 #                                 1. EXTRACT                                   #
@@ -30,7 +34,6 @@ def transform_users(raw_data):
 
     transformed_data = []
     for user in raw_data:
-        # Standardizing fields and filtering out sensitive/unnecessary data
         cleaned_user = {
             "id": user["id"],
             "name": user["name"],
@@ -48,18 +51,15 @@ def transform_users(raw_data):
 # ---------------------------------------------------------------------------- #
 @task
 def load_users(cleaned_data):
-    """Loads the transformed data into ClickHouse using clickhouse-driver."""
+    """Loads the transformed data into ClickHouse using SQLAlchemy."""
     logger = get_run_logger()
-    logger.info("Starting data load to ClickHouse...")
+    logger.info("Starting data load to ClickHouse via SQLAlchemy Engine...")
 
-    # Open connection via context manager (safer than client.disconnect())
-    # Adjust host, user, and password to match your setup
-    with Client(host="localhost", port=9000, user="default", password="") as client:
+    # engine.begin() automatically starts a transaction and commits on success
+    with engine.begin() as conn:
 
-        client.execute("CREATE DATABASE IF NOT EXISTS pipeline")
-        client.execute("USE pipeline")
-
-        client.execute("""
+        # 1. Create Table (ReplacingMergeTree syntax for ClickHouse)
+        conn.execute(text("""
             CREATE TABLE IF NOT EXISTS users (
                 id Int32,
                 name String,
@@ -69,11 +69,15 @@ def load_users(cleaned_data):
             )
             ENGINE = ReplacingMergeTree()
             ORDER BY id
-        """)
+        """))
 
-        # clickhouse-driver natively binds a list of dicts to the column names
-        client.execute(
-            "INSERT INTO users (id, name, username, email, company) VALUES",
+        # 2. Insert Data using SQLAlchemy parameter binding
+        # ClickHouse dialect expects ':param' syntax for dictionary mapping
+        conn.execute(
+            text("""
+                INSERT INTO users (id, name, username, email, company)
+                VALUES (:id, :name, :username, :email, :company)
+            """),
             cleaned_data
         )
 
