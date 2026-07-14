@@ -70,7 +70,9 @@ services:
         condition: service_healthy
     environment:
       PREFECT_API_URL: http://prefect-server:4200/api
-    command: prefect worker start --pool local-pool
+    volumes:
+      - ./data/logs:/var/log/app
+    command: sh -c "prefect worker start --pool local-pool 2>&1 | tee /var/log/app/worker.log"
     restart: on-failure
 
   prometheus:
@@ -113,8 +115,7 @@ services:
       - loki
     volumes:
       - ./configs/monitoring/promtail-config.yml:/etc/promtail/config.yml:ro,Z
-      - /var/log/journal:/var/log/journal:ro
-      - /run/systemd/journal:/run/systemd/journal:ro
+      - ./data/logs:/var/log/app:ro,Z
     command:
       - '-config.file=/etc/promtail/config.yml'
 
