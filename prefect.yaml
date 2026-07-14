@@ -1,0 +1,5 @@
+deployments:
+  - name: hello-deploy
+    entrypoint: flow/hello-world.py:hello
+    work_pool:
+      name: local-pool

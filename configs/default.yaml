@@ -1,0 +1,21 @@
+llm:
+  model: openrouter:openai/gpt-4o
+  temperature: 0.1
+  max_tokens: 4096
+
+pipeline:
+  raw_dir: ./data/raw
+  processed_dir: ./data/processed
+  output_dir: ./data/output
+  supported_input_formats:
+    - csv
+    - json
+    - parquet
+    - jsonl
+  supported_output_formats:
+    - csv
+    - json
+    - parquet
+    - jsonl
+  chunk_size: 100000
+  max_file_size_mb: 500
