@@ -8,6 +8,6 @@ deployments:
     entrypoint: flow/etl.py:main_etl_flow
     work_pool:
       name: local-pool
-    job_variables:
-      env:
-        EXTRA_PIP_PACKAGES: "clickhouse-connect"
+      job_variables:
+        env:
+          EXTRA_PIP_PACKAGES: "clickhouse-connect"
