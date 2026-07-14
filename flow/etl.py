@@ -1,10 +1,6 @@
 import httpx
+import clickhouse_connect
 from prefect import flow, task, get_run_logger
-from sqlalchemy import create_engine, text
-
-# 1. SETUP ENGINE (Adjust connection string to match your credentials/host)
-DATABASE_URL = "clickhousedb://clickhouse:clickhouse@clickhouse:8123/pipeline?compression=zstd"
-engine = create_engine(DATABASE_URL)
 
 # ---------------------------------------------------------------------------- #
 #                                 1. EXTRACT                                   #
@@ -47,44 +43,56 @@ def transform_users(raw_data):
     return transformed_data
 
 # ---------------------------------------------------------------------------- #
-#                                  3. LOAD                                     #
+#                                   3. LOAD                                    #
 # ---------------------------------------------------------------------------- #
 @task
 def load_users(cleaned_data):
-    """Loads the transformed data into ClickHouse using SQLAlchemy."""
+    """Loads the transformed data into ClickHouse using clickhouse-connect."""
     logger = get_run_logger()
-    logger.info("Starting data load to ClickHouse via SQLAlchemy Engine...")
+    logger.info("Starting data load to ClickHouse via clickhouse-connect...")
 
-    # engine.begin() automatically starts a transaction and commits on success
-    with engine.begin() as conn:
+    # Khởi tạo client kết nối (Nên khởi tạo trong Task để tránh lỗi serialization của Prefect)
+    client = clickhouse_connect.get_client(
+        host='clickhouse',
+        port=8123,
+        username='clickhouse',
+        password='clickhouse',
+        database='pipeline'
+    )
 
-        # 1. Create Table (ReplacingMergeTree syntax for ClickHouse)
-        conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS users (
-                id Int32,
-                name String,
-                username String,
-                email String,
-                company String
-            )
-            ENGINE = ReplacingMergeTree()
-            ORDER BY id
-        """))
-
-        # 2. Insert Data using SQLAlchemy parameter binding
-        # ClickHouse dialect expects ':param' syntax for dictionary mapping
-        conn.execute(
-            text("""
-                INSERT INTO users (id, name, username, email, company)
-                VALUES (:id, :name, :username, :email, :company)
-            """),
-            cleaned_data
+    # 1. Tạo bảng bằng phương thức command()
+    client.command("""
+        CREATE TABLE IF NOT EXISTS users (
+            id Int32,
+            name String,
+            username String,
+            email String,
+            company String
         )
+        ENGINE = ReplacingMergeTree()
+        ORDER BY id
+    """)
 
+    # 2. Chuẩn bị dữ liệu dạng List of Lists (hoặc List of Tuples) để Insert tối ưu nhất
+    columns = ['id', 'name', 'username', 'email', 'company']
+    data_to_insert = [
+        [user['id'], user['name'], user['username'], user['email'], user['company']]
+        for user in cleaned_data
+    ]
+
+    # 3. Thực hiện insert siêu tốc bằng phương thức insert()
+    client.insert(
+        table='users',
+        data=data_to_insert,
+        column_names=columns
+    )
+
+    # Đóng kết nối sau khi hoàn thành
+    client.close()
     logger.info("Data successfully loaded into ClickHouse!")
 
 # ---------------------------------------------------------------------------- #
-#                               4. THE FLOW                                    #
+#                                4. THE FLOW                                   #
 # ---------------------------------------------------------------------------- #
 @flow(name="User ETL Pipeline Blueprint")
 def main_etl_flow():
