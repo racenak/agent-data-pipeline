@@ -64,13 +64,13 @@ services:
     command: prefect server services start
 
   prefect-worker:
-    image: prefecthq/prefect:3-latest
+    image: ghcr.io/racenak/agent-data-pipeline-prefect-worker:latest
     depends_on:
       prefect-server:
         condition: service_healthy
     environment:
       PREFECT_API_URL: http://prefect-server:4200/api
-    command: sh -c "prefect worker start --pool local-pool 2>&1 | tee /var/log/app/worker.log"
+    command: prefect worker start --pool local-pool
     restart: on-failure
 
   prefect-prometheus-exporter:

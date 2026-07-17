@@ -1,0 +1,5 @@
+FROM prefecthq/prefect:3-latest
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir clickhouse-connect httpx python-dotenv great_expectations
