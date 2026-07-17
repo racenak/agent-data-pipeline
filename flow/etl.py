@@ -1,6 +1,11 @@
-import httpx
+import os
+
 import clickhouse_connect
-from prefect import flow, task, get_run_logger
+import httpx
+from prefect import flow, get_run_logger, task
+
+CLICKHOUSE_HOST = os.environ.get("CLICKHOUSE_HOST", "localhost")
+AGENT_API_URL = os.environ.get("AGENT_API_URL", "http://127.0.0.1:2024")
 
 # ---------------------------------------------------------------------------- #
 #                                 1. EXTRACT                                   #
@@ -53,7 +58,7 @@ def load_users(cleaned_data):
 
     # Khởi tạo client kết nối (Nên khởi tạo trong Task để tránh lỗi serialization của Prefect)
     client = clickhouse_connect.get_client(
-        host='clickhouse',
+        host=CLICKHOUSE_HOST,
         port=8123,
         username='clickhouse',
         password='clickhouse',
@@ -101,7 +106,7 @@ def run_agent_monitor(logs: str, metadata: dict):
     logger.info("Invoking monitoring agent...")
     try:
         resp = httpx.post(
-            "http://127.0.0.1:2024/runs",
+            f"{AGENT_API_URL}/runs/wait",
             json={
                 "assistant_id": "monitoring",
                 "input": {
@@ -118,7 +123,11 @@ def run_agent_monitor(logs: str, metadata: dict):
         )
         resp.raise_for_status()
         result = resp.json()
-        logger.info(f"Agent analysis: {result}")
+        analysis = result.get("output", {}).get("analysis_result", {})
+        severity = analysis.get("severity", "UNKNOWN")
+        logger.info(f"Agent analysis complete — severity={severity}")
+        if severity == "CRITICAL":
+            logger.error(f"CRITICAL: {analysis.get('error_summary', '')}")
     except Exception as e:
         logger.warning(f"Agent monitor skipped: {e}")
 
