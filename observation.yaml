@@ -37,6 +37,7 @@ services:
       GF_INSTALL_PLUGINS: grafana-piechart-panel
     volumes:
       - ./configs/monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro,Z
+      - ./configs/monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro,Z
       - grafana_data:/var/lib/grafana
     ports:
       - "3000:3000"
