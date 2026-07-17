@@ -34,6 +34,7 @@ services:
       PREFECT_API_DATABASE_CONNECTION_URL: postgresql+asyncpg://prefect:prefect@postgres:5432/prefect
       PREFECT_SERVER_API_HOST: 0.0.0.0
       PREFECT_SERVER_UI_API_URL: http://localhost:4200/api
+      PREFECT_SERVER_METRICS_ENABLED: true
       PREFECT_MESSAGING_BROKER: prefect_redis.messaging
       PREFECT_MESSAGING_CACHE: prefect_redis.messaging
       PREFECT_REDIS_MESSAGING_HOST: redis
@@ -70,7 +71,9 @@ services:
         condition: service_healthy
     environment:
       PREFECT_API_URL: http://prefect-server:4200/api
-    command: prefect worker start --pool local-pool
+    command: sh -c "prefect worker start --pool local-pool 2>&1 | tee /var/log/app/worker.log"
+    volumes:
+      - prefect_worker_logs:/var/log/app
     restart: on-failure
 
   prefect-prometheus-exporter:
@@ -81,9 +84,10 @@ services:
     environment:
       PREFECT_API_URL: http://prefect-server:4200/api
     ports:
-      - "8080:8080"
+      - "8080:8000"
     restart: on-failure
 
 volumes:
   postgres_data:
   redis_data:
+  prefect_worker_logs:

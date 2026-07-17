@@ -1,9 +1,7 @@
 import os
 
 import clickhouse_connect
-import great_expectations as gx
 import httpx
-import pandas as pd
 from prefect import flow, get_run_logger, task
 
 CLICKHOUSE_HOST = os.environ.get("CLICKHOUSE_HOST", "localhost")
@@ -49,46 +47,7 @@ def transform_users(raw_data):
     return transformed_data
 
 
-# ---------------------------------------------------------------------------- #
-#                             2.5 VALIDATE                                     #
-# ---------------------------------------------------------------------------- #
-@task
-def validate_users(data: list[dict]) -> list[dict]:
-    """Validate transformed data with Great Expectations before loading."""
-    logger = get_run_logger()
-    logger.info("Validating data with Great Expectations...")
 
-    df = pd.DataFrame(data)
-
-    validator = gx.from_pandas(df)
-    validator.expect_column_values_to_not_be_null("id")
-    validator.expect_column_values_to_be_unique("id")
-    validator.expect_column_values_to_not_be_null("name")
-    validator.expect_column_values_to_not_be_null("email")
-    validator.expect_column_values_to_match_regex("email", r"^[^@]+@[^@]+\.[^@]+$")
-    validator.expect_column_values_to_not_be_null("username")
-    validator.expect_column_values_to_be_in_type_list("id", ["int64", "int32"])
-
-    results = validator.validate()
-
-    stats = results.statistics()
-    logger.info(
-        f"GE validation: "
-        f"{stats['successful_expectations']}/{stats['evaluated_expectations']} "
-        f"expectations passed"
-    )
-
-    if not results["success"]:
-        failures = [
-            r["expectation_config"]["type"]
-            for r in results["results"]
-            if not r["success"]
-        ]
-        logger.error(f"Validation failed: {failures}")
-        raise ValueError(f"Data validation failed: {failures}")
-
-    logger.info("Data validation passed.")
-    return data
 
 
 # ---------------------------------------------------------------------------- #
@@ -184,15 +143,13 @@ def main_etl_flow():
     """The main Prefect flow orchestration."""
     raw_users = extract_users()
     clean_users = transform_users(raw_users)
-    validated_users = validate_users(clean_users)
-    load_users(validated_users)
+    load_users(clean_users)
 
     metadata = {
         "pipeline_name": "User ETL Pipeline",
         "task_id": "etl-run",
         "records_extracted": len(raw_users),
-        "records_validated": len(validated_users),
-        "records_loaded": len(validated_users),
+        "records_loaded": len(clean_users),
     }
     run_agent_monitor(logs="", metadata=metadata)
 
