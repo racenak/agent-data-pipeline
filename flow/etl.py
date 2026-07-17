@@ -92,7 +92,39 @@ def load_users(cleaned_data):
     logger.info("Data successfully loaded into ClickHouse!")
 
 # ---------------------------------------------------------------------------- #
-#                                4. THE FLOW                                   #
+#                                4. AGENT MONITOR                              #
+# ---------------------------------------------------------------------------- #
+@task
+def run_agent_monitor(logs: str, metadata: dict):
+    """Invoke the monitoring agent via LangGraph API for analysis."""
+    logger = get_run_logger()
+    logger.info("Invoking monitoring agent...")
+    try:
+        resp = httpx.post(
+            "http://127.0.0.1:2024/runs",
+            json={
+                "assistant_id": "monitoring",
+                "input": {
+                    "raw_logs": logs,
+                    "job_metadata": metadata,
+                    "processed_logs": "",
+                    "analysis_result": {},
+                    "retry_count": 0,
+                    "missing_info_reason": "",
+                    "messages": [],
+                },
+            },
+            timeout=120,
+        )
+        resp.raise_for_status()
+        result = resp.json()
+        logger.info(f"Agent analysis: {result}")
+    except Exception as e:
+        logger.warning(f"Agent monitor skipped: {e}")
+
+
+# ---------------------------------------------------------------------------- #
+#                                5. THE FLOW                                   #
 # ---------------------------------------------------------------------------- #
 @flow(name="User ETL Pipeline Blueprint")
 def main_etl_flow():
@@ -100,6 +132,14 @@ def main_etl_flow():
     raw_users = extract_users()
     clean_users = transform_users(raw_users)
     load_users(clean_users)
+
+    metadata = {
+        "pipeline_name": "User ETL Pipeline",
+        "task_id": "etl-run",
+        "records_extracted": len(raw_users),
+        "records_loaded": len(clean_users),
+    }
+    run_agent_monitor(logs="", metadata=metadata)
 
 if __name__ == "__main__":
     main_etl_flow()

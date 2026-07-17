@@ -1,6 +1,6 @@
 import asyncio
 
-from graphs.monitoring import build_graph
+from src.graphs.monitoring import build_graph
 
 
 async def main():

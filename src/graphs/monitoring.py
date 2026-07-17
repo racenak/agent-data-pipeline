@@ -4,7 +4,10 @@ import json
 import os
 from typing import Any, Dict, Literal
 
+from dotenv import load_dotenv
 import httpx
+
+load_dotenv()
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_openrouter import ChatOpenRouter
