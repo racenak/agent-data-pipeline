@@ -153,6 +153,19 @@ services:
       retries: 5
       start_period: 30s
 
+  grafana-mcp:
+      image: grafana/mcp-grafana
+      command:
+        - -t
+        - streamable-http
+      ports:
+        - "8000:8000"
+      environment:
+        GRAFANA_URL: http://grafana:3000
+        GRAFANA_SERVICE_ACCOUNT_TOKEN: ${GRAFANA_SERVICE_ACCOUNT_TOKEN}
+      depends_on:
+        - grafana
+
 volumes:
   postgres_data:
   redis_data:
