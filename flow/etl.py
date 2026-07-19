@@ -1,4 +1,5 @@
 import os
+import json
 import uuid
 
 import boto3
@@ -53,7 +54,7 @@ def load_raw_to_seaweedfs(raw_data):
     run_id = uuid.uuid4().hex
     key = f"users/{run_id}.json"
 
-    client.put_object(Bucket=SEAWEEDFS_BUCKET, Key=key, Body=pd.io.json.dumps(raw_data))
+    client.put_object(Bucket=SEAWEEDFS_BUCKET, Key=key, Body=json.dumps(raw_data))
     logger.info(f"Raw data written to s3://{SEAWEEDFS_BUCKET}/{key}")
     return key
 

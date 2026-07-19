@@ -84,7 +84,7 @@ services:
     environment:
       PREFECT_API_URL: http://prefect-server:4200/api
     ports:
-      - "8080:8000"
+      - "8085:8000"
     restart: on-failure
 
 volumes:
