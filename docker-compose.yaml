@@ -1,3 +1,4 @@
 include:
   - docker-prefect.yaml
+  - docker-data.yaml
   - observation.yaml

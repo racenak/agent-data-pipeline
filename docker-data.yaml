@@ -1,0 +1,35 @@
+services:
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.39
+    ports:
+      - "9333:9333"   # Master Server / Admin UI
+      - "8080:8080"   # Volume Server
+      - "8888:8888"   # Filer Web UI / HTTP API
+      - "8333:8333"   # S3 API Gateway
+    volumes:
+      - seaweedfs_data:/data
+    command: 'server -dir=/data -s3'
+    restart: unless-stopped
+
+  clickhouse:
+    image: clickhouse:26.5.5.8
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    environment:
+      CLICKHOUSE_DB: pipeline
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--user=clickhouse", "--password=clickhouse", "--query", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  seaweedfs_data:
+  clickhouse_data:

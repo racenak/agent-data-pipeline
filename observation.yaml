@@ -42,25 +42,6 @@ services:
     ports:
       - "3000:3000"
 
-  clickhouse:
-    image: clickhouse:26.5.5.8
-    volumes:
-      - clickhouse_data:/var/lib/clickhouse
-    ports:
-      - "8123:8123"
-      - "9000:9000"
-    environment:
-      CLICKHOUSE_DB: pipeline
-      CLICKHOUSE_USER: clickhouse
-      CLICKHOUSE_PASSWORD: clickhouse
-      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
-    healthcheck:
-      test: ["CMD", "clickhouse-client", "--user=clickhouse", "--password=clickhouse", "--query", "SELECT 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-
   grafana-mcp:
     image: grafana/mcp-grafana
     command:
