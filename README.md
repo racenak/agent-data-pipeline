@@ -45,23 +45,43 @@ Observability stack (docker-compose):
 
 ## Data Pipeline
 
-The data pipeline is a Prefect flow defined in `flow/etl.py`
+The data pipeline is an **agent-free** Prefect flow defined in `flow/etl.py`
 (`main_etl_flow`, deployed as **"User ETL Pipeline Blueprint"**). It runs the
-classic extract → transform → load pattern, then triggers the monitoring agent:
+following stages, failing fast with a Slack alert on any validation error:
+
+```
+extract → load_raw_to_seaweedfs → schema_validation (GE)
+                                     ├─ FAIL → send_slack(CRITICAL) → end
+                                     └─ PASS → transform → load_staging_clickhouse
+                                               → data_quality_validation (GE)
+                                                 ├─ FAIL → send_slack(CRITICAL) → end
+                                                 └─ PASS → merge_to_mart → send_slack(INFO)
+```
 
 1. **Extract** (`extract_users`) — fetches raw user records from the public
    [JSONPlaceholder](https://jsonplaceholder.typicode.com/users) API. Retries up
    to 3 times with a 5s delay on failure.
-2. **Transform** (`transform_users`) — cleans each record, lowercases
+2. **Load raw** (`load_raw_to_seaweedfs`) — persists the raw payload as an S3
+   object in **SeaweedFS** (`s3://<bucket>/users/<run_id>.json`) via `boto3`
+   for lineage/audit. The S3 gateway listens on `:8333` (see `docker-data.yaml`).
+3. **Schema validation** (`schema_validation`) — a **Great Expectations** suite
+   on the raw data checking required columns exist, `id` is integer-typed, and
+   `email` matches a basic regex. On failure a `CRITICAL` Slack alert is sent
+   and the flow stops.
+4. **Transform** (`transform_users`) — cleans each record, lowercases
    `username`/`email`, and flattens the nested `company` name into a flat
    dictionary.
-3. **Load** (`load_users`) — connects to **ClickHouse** via `clickhouse-connect`
-   and upserts into a `ReplacingMergeTree` `users` table (`id`, `name`,
-   `username`, `email`, `company`).
-4. **Agent monitor** (`run_agent_monitor`) — POSTs the job metadata to the
-   LangGraph server (`/runs/wait`) for automated log analysis. On `CRITICAL`
-   severity it logs an error; failures are caught and logged as a warning so the
-   pipeline still completes.
+5. **Load staging** (`load_staging_clickhouse`) — connects to **ClickHouse** via
+   `clickhouse-connect` and inserts into the `users_staging` `ReplacingMergeTree`
+   table.
+6. **Data quality validation** (`data_quality_validation`) — a second **Great
+   Expectations** suite on the cleaned data: non-null `email`, unique `id`,
+   `username` lowercase, valid `email`. On failure a `CRITICAL` Slack alert is
+   sent and the flow stops.
+7. **Merge to mart** (`merge_to_mart`) — `INSERT INTO users_mart SELECT ... FROM
+   users_staging`, deduplicated via `ReplacingMergeTree` (ORDER BY `id`).
+8. **Slack** (`send_slack`) — posts a color-coded alert (red CRITICAL / green
+   INFO). No-op when `SLACK_WEBHOOK_URL` is unset.
 
 A second trivial flow, `flow/hello.py` (`hello_flow`), is included as a
 deployment example.
@@ -103,7 +123,7 @@ interactively via `src/main.py`.
 
 | Path | Purpose |
 | --- | --- |
-| `flow/etl.py` | Main Prefect ETL flow (extract → transform → load → agent monitor) |
+| `flow/etl.py` | Agent-free Prefect ETL flow: extract → SeaweedFS raw → GE schema → transform → ClickHouse staging → GE data quality → mart → Slack |
 | `flow/hello.py` | Minimal example flow |
 | `src/graphs/monitoring.py` | LangGraph monitoring / SRE agent |
 | `src/main.py` | Interactive CLI to chat with the agent |
@@ -140,27 +160,38 @@ cp .env.example .env   # then edit: OPENROUTER_API_KEY, SLACK_WEBHOOK_URL, ...
   (`local-pool`), and a Prometheus exporter.
 - `observation.yaml` — Prometheus, Loki, Promtail, Grafana, the Grafana MCP
   server (exposed on `:8000`), and ClickHouse.
+- `docker-data.yaml` — SeaweedFS (S3 gateway on `:8333`) and ClickHouse, used by
+  the data pipeline for raw object storage and the mart.
 
 ## Running locally
 
 ### 1. Start the infrastructure
 
+For the **data pipeline** (no agent required):
+
 ```bash
-docker compose up -d
+docker compose -f docker-data.yaml up -d
 ```
 
-This brings up Prefect (UI on `http://localhost:4200`), Grafana
+This brings up **SeaweedFS** (S3 gateway on `:8333`, Filer UI on `:8888`) and
+**ClickHouse** (`:8123`). For the full stack including the monitoring agent:
+
+```bash
+docker compose up -d   # docker-prefect.yaml + observation.yaml
+```
+
+That brings up Prefect (UI on `http://localhost:4200`), Grafana
 (`http://localhost:3000`, admin/admin), Prometheus (`:9090`), ClickHouse
 (`:8123`), and the Grafana MCP server (`:8000`).
 
-### 2. Start the LangGraph agent server
+### 2. Start the LangGraph agent server (optional, agent only)
 
 ```bash
 langgraph dev   # serves the "monitoring" graph on http://127.0.0.1:2024
 ```
 
-The ETL flow calls this server at `AGENT_API_URL` (default
-`http://127.0.0.1:2024`).
+Required only if you run the LangGraph monitoring agent; the data pipeline does
+not call it.
 
 ### 3. Run the ETL flow
 
@@ -185,13 +216,18 @@ Key environment variables (see `.env`):
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `OPENROUTER_API_KEY` | — | Required for LLM access |
-| `SLACK_WEBHOOK_URL` | `""` | Slack incoming webhook for alerts (disabled if empty) |
-| `AGENT_API_URL` | `http://127.0.0.1:2024` | LangGraph server URL used by the ETL flow |
-| `CLICKHOUSE_HOST` | `localhost` | ClickHouse host for the load step |
-| `GRAFANA_SERVICE_ACCOUNT_TOKEN` | — | Token for the Grafana MCP server |
+| `SLACK_WEBHOOK_URL` | `""` | Slack incoming webhook for pipeline alerts (disabled if empty) |
+| `CLICKHOUSE_HOST` | `localhost` | ClickHouse host for staging + mart steps |
+| `SEAWEEDFS_ENDPOINT` | `http://localhost:8333` | SeaweedFS S3 gateway URL |
+| `SEAWEEDFS_ACCESS_KEY` | `""` | S3 access key for SeaweedFS |
+| `SEAWEEDFS_SECRET_KEY` | `""` | S3 secret key for SeaweedFS |
+| `SEAWEEDFS_BUCKET` | `raw` | S3 bucket for raw payloads |
+| `OPENROUTER_API_KEY` | — | Required only for the LangGraph monitoring agent |
+| `GRAFANA_SERVICE_ACCOUNT_TOKEN` | — | Token for the Grafana MCP server (agent only) |
 
-Monitoring retries in the agent are capped at `MAX_RETRIES = 2`
+The data pipeline itself does **not** depend on the agent or OpenRouter.
+
+The LangGraph agent retries are capped at `MAX_RETRIES = 2`
 (`src/graphs/monitoring.py`).
 
 ## Monitoring & alerting

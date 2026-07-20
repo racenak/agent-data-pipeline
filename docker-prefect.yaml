@@ -73,6 +73,7 @@ services:
       PREFECT_API_URL: http://prefect-server:4200/api
     command: sh -c "prefect worker start --pool local-pool 2>&1 | tee /var/log/app/worker.log"
     volumes:
+      - ./flows:/app/flows
       - prefect_worker_logs:/var/log/app
     restart: on-failure
 
@@ -84,7 +85,7 @@ services:
     environment:
       PREFECT_API_URL: http://prefect-server:4200/api
     ports:
-      - "8080:8000"
+      - "8085:8000"
     restart: on-failure
 
 volumes:
