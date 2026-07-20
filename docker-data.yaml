@@ -8,7 +8,8 @@ services:
       - "8333:8333"   # S3 API Gateway
     volumes:
       - seaweedfs_data:/data
-    command: 'server -dir=/data -s3'
+      - ./configs/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro,Z
+    command: 'server -dir=/data -s3 -s3.config=/etc/seaweedfs/s3.json'
     restart: unless-stopped
 
   clickhouse:

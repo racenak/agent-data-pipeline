@@ -1,4 +1,3 @@
-import os
 import json
 import uuid
 
@@ -8,13 +7,7 @@ import great_expectations as gx
 import httpx
 import pandas as pd
 from prefect import flow, get_run_logger, task
-
-CLICKHOUSE_HOST = os.environ.get("CLICKHOUSE_HOST", "localhost")
-SEAWEEDFS_ENDPOINT = os.environ.get("SEAWEEDFS_ENDPOINT", "http://localhost:8333")
-SEAWEEDFS_ACCESS_KEY = os.environ.get("SEAWEEDFS_ACCESS_KEY", "")
-SEAWEEDFS_SECRET_KEY = os.environ.get("SEAWEEDFS_SECRET_KEY", "")
-SEAWEEDFS_BUCKET = os.environ.get("SEAWEEDFS_BUCKET", "raw")
-SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "")
+from prefect.variables import Variable
 
 
 # ---------------------------------------------------------------------------- #
@@ -44,18 +37,19 @@ def load_raw_to_seaweedfs(raw_data):
     logger = get_run_logger()
     logger.info("Persisting raw data to SeaweedFS...")
 
+    bucket = Variable.get("seaweedfs_bucket", default="raw")
     client = boto3.client(
         "s3",
-        endpoint_url=SEAWEEDFS_ENDPOINT,
-        aws_access_key_id=SEAWEEDFS_ACCESS_KEY,
-        aws_secret_access_key=SEAWEEDFS_SECRET_KEY,
+        endpoint_url=Variable.get("seaweedfs_endpoint", default="http://localhost:8333"),
+        aws_access_key_id=Variable.get("seaweedfs_access_key", default=""),
+        aws_secret_access_key=Variable.get("seaweedfs_secret_key", default=""),
     )
 
     run_id = uuid.uuid4().hex
     key = f"users/{run_id}.json"
 
-    client.put_object(Bucket=SEAWEEDFS_BUCKET, Key=key, Body=json.dumps(raw_data))
-    logger.info(f"Raw data written to s3://{SEAWEEDFS_BUCKET}/{key}")
+    client.put_object(Bucket=bucket, Key=key, Body=json.dumps(raw_data))
+    logger.info(f"Raw data written to s3://{bucket}/{key}")
     return key
 
 
@@ -74,30 +68,29 @@ def schema_validation(raw_data):
     df = pd.DataFrame(raw_data)
 
     context = gx.get_context()
-    data_source = context.data_sources.add_pandas("raw_pandas")
+    data_source = context.sources.add_or_update_pandas("raw_pandas")
     data_asset = data_source.add_dataframe_asset("raw_users")
-    batch_def = data_asset.add_batch_definition_whole_dataframe("batch")
-    batch = batch_def.get_batch(batch_parameters={"dataframe": df})
+    batch_request = data_asset.build_batch_request(dataframe=df)
 
-    suite = gx.ExpectationSuite("schema_suite")
-    suite.add_expectation(gx.expectations.ExpectColumnToExist(column="id"))
-    suite.add_expectation(gx.expectations.ExpectColumnToExist(column="name"))
-    suite.add_expectation(gx.expectations.ExpectColumnToExist(column="username"))
-    suite.add_expectation(gx.expectations.ExpectColumnToExist(column="email"))
-    suite.add_expectation(gx.expectations.ExpectColumnToExist(column="company"))
-    suite.add_expectation(
-        gx.expectations.ExpectColumnValuesToBeOfType(column="id", type_="int64")
-    )
-    suite.add_expectation(
-        gx.expectations.ExpectColumnValuesToMatchRegex(
-            column="email", regex=r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
-        )
+    context.add_or_update_expectation_suite("schema_suite")
+    validator = context.get_validator(
+        batch_request=batch_request, expectation_suite_name="schema_suite"
     )
 
-    results = batch.validate(suite)
+    validator.expect_column_to_exist("id")
+    validator.expect_column_to_exist("name")
+    validator.expect_column_to_exist("username")
+    validator.expect_column_to_exist("email")
+    validator.expect_column_to_exist("company")
+    validator.expect_column_values_to_be_of_type("id", "int64")
+    validator.expect_column_values_to_match_regex(
+        "email", r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
+    )
+
+    results = validator.validate()
     passed = results["success"]
     logger.info(f"Schema validation passed={passed}")
-    return {"passed": passed, "report": results}
+    return {"passed": passed, "report": results.to_json_dict()}
 
 
 # ---------------------------------------------------------------------------- #
@@ -133,7 +126,7 @@ def load_staging_clickhouse(cleaned_data):
     logger.info("Starting data load to ClickHouse staging via clickhouse-connect...")
 
     client = clickhouse_connect.get_client(
-        host=CLICKHOUSE_HOST,
+        host=Variable.get("clickhouse_host", default="localhost"),
         port=8123,
         username="clickhouse",
         password="clickhouse",
@@ -180,31 +173,26 @@ def data_quality_validation(cleaned_data):
     df = pd.DataFrame(cleaned_data)
 
     context = gx.get_context()
-    data_source = context.data_sources.add_pandas("clean_pandas")
+    data_source = context.sources.add_or_update_pandas("clean_pandas")
     data_asset = data_source.add_dataframe_asset("clean_users")
-    batch_def = data_asset.add_batch_definition_whole_dataframe("batch")
-    batch = batch_def.get_batch(batch_parameters={"dataframe": df})
+    batch_request = data_asset.build_batch_request(dataframe=df)
 
-    suite = gx.ExpectationSuite("data_quality_suite")
-    suite.add_expectation(
-        gx.expectations.ExpectColumnValuesToNotBeNull(column="email")
-    )
-    suite.add_expectation(gx.expectations.ExpectColumnValuesToBeUnique(column="id"))
-    suite.add_expectation(
-        gx.expectations.ExpectColumnValuesToMatchRegex(
-            column="username", regex=r"^[a-z0-9._]+$"
-        )
-    )
-    suite.add_expectation(
-        gx.expectations.ExpectColumnValuesToMatchRegex(
-            column="email", regex=r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
-        )
+    context.add_or_update_expectation_suite("data_quality_suite")
+    validator = context.get_validator(
+        batch_request=batch_request, expectation_suite_name="data_quality_suite"
     )
 
-    results = batch.validate(suite)
+    validator.expect_column_values_to_not_be_null("email")
+    validator.expect_column_values_to_be_unique("id")
+    validator.expect_column_values_to_match_regex("username", r"^[a-z0-9._]+$")
+    validator.expect_column_values_to_match_regex(
+        "email", r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
+    )
+
+    results = validator.validate()
     passed = results["success"]
     logger.info(f"Data quality validation passed={passed}")
-    return {"passed": passed, "report": results}
+    return {"passed": passed, "report": results.to_json_dict()}
 
 
 # ---------------------------------------------------------------------------- #
@@ -217,7 +205,7 @@ def merge_to_mart():
     logger.info("Merging staging into mart...")
 
     client = clickhouse_connect.get_client(
-        host=CLICKHOUSE_HOST,
+        host=Variable.get("clickhouse_host", default="localhost"),
         port=8123,
         username="clickhouse",
         password="clickhouse",
@@ -254,7 +242,7 @@ def merge_to_mart():
 # ---------------------------------------------------------------------------- #
 @task
 def send_slack(message: str, severity: str = "INFO"):
-    """Posts a message to Slack. No-op when SLACK_WEBHOOK_URL is unset."""
+    """Posts a message to Slack. No-op when the slack_webhook_url Variable is unset."""
     logger = get_run_logger()
     color = {
         "CRITICAL": "#FF0000",
@@ -262,7 +250,8 @@ def send_slack(message: str, severity: str = "INFO"):
         "INFO": "#36A64F",
     }.get(severity, "#36A64F")
 
-    if not SLACK_WEBHOOK_URL:
+    webhook_url = Variable.get("slack_webhook_url", default="")
+    if not webhook_url:
         logger.info(f"Slack not configured — skipping alert [{severity}]: {message}")
         return
 
@@ -284,7 +273,7 @@ def send_slack(message: str, severity: str = "INFO"):
         ]
     }
     try:
-        httpx.post(SLACK_WEBHOOK_URL, json=payload, timeout=10)
+        httpx.post(webhook_url, json=payload, timeout=10)
         logger.info("Slack alert sent.")
     except Exception as e:
         logger.warning(f"Slack alert failed: {e}")
