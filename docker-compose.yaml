@@ -166,6 +166,22 @@ services:
       depends_on:
         - grafana
 
+  agent-memory:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: agent_memory
+      POSTGRES_USER: agent
+      POSTGRES_PASSWORD: agent
+    volumes:
+      - agent_memory_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agent"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
 volumes:
   postgres_data:
   redis_data:
@@ -173,3 +189,4 @@ volumes:
   loki_data:
   grafana_data:
   clickhouse_data:
+  agent_memory_data:

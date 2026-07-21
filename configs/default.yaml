@@ -19,3 +19,9 @@ pipeline:
     - jsonl
   chunk_size: 100000
   max_file_size_mb: 500
+
+memory:
+  enabled: true
+  dsn: "postgresql+asyncpg://agent:agent@localhost:5433/agent_memory"
+  dsn_docker: "postgresql+asyncpg://agent:agent@agent-memory:5432/agent_memory"
+  max_similar_incidents: 3
