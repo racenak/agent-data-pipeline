@@ -15,7 +15,13 @@ from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 from typing_extensions import TypedDict
 
+from memory import Incident, IncidentStore, extract_error_signature, format_past_incidents
+
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "")
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL",
+    "postgresql+asyncpg://agent:agent@localhost:5433/agent_memory",
+)
 
 MAX_RETRIES = 2
 
@@ -28,6 +34,7 @@ class AgentState(TypedDict):
     retry_count: int
     missing_info_reason: str
     messages: list
+    past_incidents: str
 
 
 def make_filter_log_node():
@@ -47,11 +54,40 @@ def make_filter_log_node():
     return filter_log_node
 
 
+def make_lookup_memory_node(store: IncidentStore):
+    async def lookup_memory_node(state: AgentState) -> Dict[str, Any]:
+        pipeline_name = state["job_metadata"].get("pipeline_name", "")
+        signature = extract_error_signature(state["raw_logs"])
+
+        if not signature or not pipeline_name:
+            return {"past_incidents": ""}
+
+        try:
+            incidents = await store.find_similar(
+                error_signature=signature,
+                pipeline_name=pipeline_name,
+                limit=3,
+            )
+            past = format_past_incidents(incidents)
+        except Exception:
+            past = ""
+
+        return {"past_incidents": past}
+    return lookup_memory_node
+
+
 def make_analyze_log_node(llm):
     def analyze_log_node(state: AgentState) -> Dict[str, Any]:
+        past = state.get("past_incidents", "")
         system_prompt = (
             "You are an expert Data Platform SRE Agent.\n"
             "Analyze the provided application/data logs and metadata to identify the root cause.\n"
+            "\n"
+            f"{past}\n"
+            "\n"
+            "Use the past incidents above to check if this is a recurring issue. "
+            "If a similar incident was resolved before, reference the previous resolution.\n"
+            "\n"
             "You MUST return a JSON object with EXACTLY the following fields:\n"
             "1. 'is_enough_info': true/false (Set false ONLY if logs are cut off and you absolutely need lines BEFORE or AFTER to conclude).\n"
             "2. 'missing_info_reason': String (If is_enough_info is false, specify what you need, else '').\n"
@@ -95,6 +131,34 @@ def make_fetch_more_log_node():
             "retry_count": state["retry_count"] + 1,
         }
     return fetch_more_log_node
+
+
+def make_save_incident_node(store: IncidentStore):
+    async def save_incident_node(state: AgentState) -> Dict[str, Any]:
+        analysis = state["analysis_result"]
+        meta = state["job_metadata"]
+        signature = extract_error_signature(state["raw_logs"])
+
+        if not signature:
+            return {}
+
+        incident = Incident(
+            pipeline_name=meta.get("pipeline_name", "unknown"),
+            task_id=meta.get("task_id"),
+            error_signature=signature,
+            error_summary=analysis.get("error_summary"),
+            root_cause=analysis.get("root_cause"),
+            severity=analysis.get("severity"),
+            suggested_actions=analysis.get("suggested_actions", []),
+        )
+
+        try:
+            await store.save(incident)
+        except Exception:
+            pass
+
+        return {}
+    return save_incident_node
 
 
 def make_send_slack_node():
@@ -186,16 +250,22 @@ async def build_graph():
     llm = ChatOpenRouter(model="deepseek/deepseek-v4-flash", temperature=0.1)
     llm = llm.bind_tools(tools)
 
+    store = IncidentStore(dsn=DATABASE_URL)
+    await store.init()
+
     workflow = StateGraph(AgentState)
 
     workflow.add_node("filter_log", make_filter_log_node())
+    workflow.add_node("lookup_memory", make_lookup_memory_node(store))
     workflow.add_node("analyze_log", make_analyze_log_node(llm))
+    workflow.add_node("save_incident", make_save_incident_node(store))
     workflow.add_node("fetch_more_log", make_fetch_more_log_node())
     workflow.add_node("send_slack", make_send_slack_node())
     workflow.add_node("tools", ToolNode(tools))
 
     workflow.set_entry_point("filter_log")
-    workflow.add_edge("filter_log", "analyze_log")
+    workflow.add_edge("filter_log", "lookup_memory")
+    workflow.add_edge("lookup_memory", "analyze_log")
 
     workflow.add_conditional_edges(
         "analyze_log",
@@ -203,10 +273,11 @@ async def build_graph():
         {
             "tools": "tools",
             "fetch_more": "fetch_more_log",
-            "slack": "send_slack",
+            "slack": "save_incident",
         },
     )
 
+    workflow.add_edge("save_incident", "send_slack")
     workflow.add_edge("tools", "analyze_log")
     workflow.add_edge("fetch_more_log", "analyze_log")
     workflow.add_edge("send_slack", END)

@@ -21,6 +21,7 @@ async def main():
                 "retry_count": 0,
                 "missing_info_reason": "",
                 "messages": [],
+                "past_incidents": "",
             }
         )
 
