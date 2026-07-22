@@ -1,0 +1,5 @@
+FROM langchain/langgraph-api:latest-py3.12
+
+COPY src/ src/
+
+RUN pip install --no-cache-dir langchain-mcp-adapters==0.0.4 langchain-openrouter==0.2.6

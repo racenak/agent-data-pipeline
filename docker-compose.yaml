@@ -2,3 +2,4 @@ include:
   - docker-prefect.yaml
   - docker-data.yaml
   - docker-observation.yaml
+  - docker-langgraph.yaml
