@@ -1,5 +1,9 @@
 FROM langchain/langgraph-api:latest-py3.12
 
-COPY src/ src/
+WORKDIR /app
+
+COPY langgraph.json .
 
 RUN pip install --no-cache-dir langchain-mcp-adapters langchain-openrouter
+
+COPY src/ src/
