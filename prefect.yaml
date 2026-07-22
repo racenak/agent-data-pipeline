@@ -1,10 +1,10 @@
 deployments:
   - name: etl
-    entrypoint: flow/etl.py:main_etl_flow
+    entrypoint: flows/etl.py:main_etl_flow
     work_pool:
       name: local-pool
 
   - name: hello
-    entrypoint: flow/hello.py:hello_flow
+    entrypoint: flows/hello.py:hello_flow
     work_pool:
       name: local-pool
