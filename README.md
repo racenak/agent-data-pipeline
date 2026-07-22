@@ -25,8 +25,6 @@ The project has two cooperating parts:
 
 ## Architecture
 
-![Prefect Overview](media/prefect_overview.png)
-
 ```
                         ┌─────────────────────────────┐
                         │     Prefect (orchestration) │
@@ -74,6 +72,8 @@ extract → load_raw_to_seaweedfs → schema_validation (GE)
                                                  ├─ FAIL → send_slack(CRITICAL) → end
                                                  └─ PASS → merge_to_mart → send_slack(INFO)
 ```
+
+![Prefect Overview](media/prefect_overview.png)
 
 ![Prefect Flow](media/prefect_flow.png)
 
