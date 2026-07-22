@@ -237,21 +237,28 @@ def route_after_analysis(state: AgentState) -> Literal["fetch_more", "tools", "s
 
 
 async def build_graph():
-    client = MultiServerMCPClient(
-        {
-            "grafana": {
-                "transport": "streamable_http",
-                "url": "http://localhost:8000/mcp",
+    tools = []
+    try:
+        client = MultiServerMCPClient(
+            {
+                "grafana": {
+                    "transport": "streamable_http",
+                    "url": os.environ.get("GRAFANA_MCP_URL", "http://localhost:8000/mcp"),
+                }
             }
-        }
-    )
+        )
+        tools = await client.get_tools()
+    except Exception:
+        pass
 
-    tools = await client.get_tools()
-    llm = ChatOpenRouter(model="deepseek/deepseek-v4-flash", temperature=0.1)
+    llm = ChatOpenRouter(model=os.environ.get("LLM_MODEL", "deepseek/deepseek-v4-flash"), temperature=0.1)
     llm = llm.bind_tools(tools)
 
     store = IncidentStore(dsn=DATABASE_URL)
-    await store.init()
+    try:
+        await store.init()
+    except Exception:
+        pass
 
     workflow = StateGraph(AgentState)
 

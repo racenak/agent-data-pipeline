@@ -1,7 +1,16 @@
 FROM langchain/langgraph-api:latest-py3.12
 
+WORKDIR /app
+
+ENV PYTHONPATH="/app/src:$PYTHONPATH"
+
 COPY langgraph.json .
 
-RUN pip install --no-cache-dir langchain-mcp-adapters langchain-openrouter
+RUN pip install --no-cache-dir \
+    langchain-mcp-adapters \
+    langchain-openrouter \
+    asyncpg \
+    python-dotenv \
+    pyyaml
 
 COPY src/ src/
