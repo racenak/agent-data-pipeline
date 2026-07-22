@@ -6,4 +6,4 @@ cd "$SCRIPT_DIR"
 
 source .venv/bin/activate
 
-python -m src.data_pipeline_agent.main "$@"
+python flows/etl.py "$@"

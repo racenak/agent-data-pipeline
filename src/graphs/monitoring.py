@@ -251,7 +251,7 @@ async def build_graph():
     except Exception:
         pass
 
-    llm = ChatOpenRouter(model=os.environ.get("LLM_MODEL", "deepseek/deepseek-v4-flash"), temperature=0.1)
+    llm = ChatOpenRouter(model=os.environ.get("LLM_MODEL", "openai/gpt-oss-20b:free"), temperature=0.1)
     llm = llm.bind_tools(tools)
 
     store = IncidentStore(dsn=DATABASE_URL)

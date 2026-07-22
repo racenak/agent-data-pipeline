@@ -1,6 +1,4 @@
-import pytest
+import sys
+import os
 
-
-@pytest.fixture(scope="session")
-def anyio_backend():
-    return "asyncio"
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))

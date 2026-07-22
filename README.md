@@ -25,28 +25,31 @@ The project has two cooperating parts:
 
 ## Architecture
 
+![Prefect Overview](media/prefect_overview.png)
+
 ```
                         ┌─────────────────────────────┐
                         │     Prefect (orchestration) │
-                        │  - extract / transform / load│
-                        │  - ClickHouse load           │
+                        │  - extract / transform /load│
+                        │  - Seaweedfs raw            │
+                        │  - ClickHouse load          │
                         └──────────────┬──────────────┘
                                        │ HTTP /runs/wait
                                        ▼
                         ┌─────────────────────────────┐
-                        │  LangGraph "monitoring" agent│
-                        │  filter_log → lookup_memory  │
-                        │       → analyze_log          │
-                        │        ↘ tools (Grafana MCP) │
-                        │        ↘ fetch_more_log      │
-                        │       → save_incident        │
-                        │       → send_slack           │
-                        └─────────────────────────────┘
+                        │ LangGraph "monitoring" agent│
+                        │ filter_log → lookup_memory  │
+                        │      → analyze_log          │
+                        │      ↘ tools (Grafana MCP)  │
+                        │      ↘ fetch_more_log       │
+                        │      → save_incident        │
+                        │      → send_slack           │
+                        └──────────────┬──────────────┘
                                        │
                                        ▼
                         ┌─────────────────────────────┐
-                        │  PostgreSQL (incident store) │
-                        │  error signatures, history   │
+                        │ PostgreSQL (incident store) │
+                        │ error signatures, history   │
                         └─────────────────────────────┘
 
 Observability stack (docker-compose):
@@ -72,12 +75,18 @@ extract → load_raw_to_seaweedfs → schema_validation (GE)
                                                  └─ PASS → merge_to_mart → send_slack(INFO)
 ```
 
+![Prefect Flow](media/prefect_flow.png)
+
+![Prefect Flow Run](media/prefect_each_run.png)
+
 1. **Extract** (`extract_users`) — fetches raw user records from the public
    [JSONPlaceholder](https://jsonplaceholder.typicode.com/users) API. Retries up
    to 3 times with a 5s delay on failure.
 2. **Load raw** (`load_raw_to_seaweedfs`) — persists the raw payload as an S3
    object in **SeaweedFS** (`s3://<bucket>/users/<run_id>.json`) via `boto3`
    for lineage/audit. The S3 gateway listens on `:8333` (see `docker-data.yaml`).
+
+![SeaweedFS Storage](media/seaweedfs.png)
 3. **Schema validation** (`schema_validation`) — a **Great Expectations** suite
    on the raw data checking required columns exist, `id` is integer-typed, and
    `email` matches a basic regex. On failure a `CRITICAL` Slack alert is sent
@@ -101,6 +110,8 @@ A second trivial flow, `flows/hello.py` (`hello_flow`), is included as a
 deployment example.
 
 ## Agent Workflow
+
+![LangGraph Agent Flow](media/langgraph_flow.png)
 
 The monitoring agent is a LangGraph state graph built in
 `src/graphs/monitoring.py` (`build_graph`) and served as the `monitoring` graph
@@ -127,7 +138,7 @@ filter_log → lookup_memory → analyze_log ─┬─(needs tools)─▶ tools 
   `is_enough_info`, `missing_info_reason`, `error_summary`, `root_cause`,
   `suggested_actions`, and `severity` (`CRITICAL`/`WARNING`). The LLM is bound
   to Grafana MCP tools (streamable HTTP at `:8000`) for pulling
-  metrics/dashboards.
+  metrics/dashboards. LLM model is configurable via `LLM_MODEL` env var.
 - **`tools`** — executes any Grafana tool calls, then loops back to
   `analyze_log`.
 - **`fetch_more_log`** — extends the log context and increments `retry_count`,
@@ -143,6 +154,10 @@ Routing after `analyze_log` (`route_after_analysis`) decides whether to call
 tools, fetch more logs, or save the incident and send the alert. The agent can
 be exercised interactively via `src/main.py`.
 
+The graph build is resilient: MCP and store connections are wrapped in
+`try/except` so the graph registers even if external services are unavailable
+at startup.
+
 ## Repository layout
 
 | Path | Purpose |
@@ -154,7 +169,9 @@ be exercised interactively via `src/main.py`.
 | `src/main.py` | Interactive CLI to chat with the agent |
 | `langgraph.json` | LangGraph deployment config (graph: `monitoring`) |
 | `prefect.yaml` | Prefect deployment definitions (`etl`, `hello`) |
-| `docker-compose.yaml` | Composes Prefect + data + observability stacks |
+| `Dockerfile.langgraph-api` | Multi-stage Dockerfile for the LangGraph agent image |
+| `Dockerfile.prefect-worker` | Dockerfile for the Prefect worker image |
+| `docker-compose.yaml` | Composes all stacks (Prefect + data + observability + LangGraph) |
 | `docker-prefect.yaml` | Prefect server, Postgres, Redis, worker, Prometheus exporter |
 | `docker-data.yaml` | SeaweedFS (S3 gateway) and ClickHouse |
 | `docker-observation.yaml` | Prometheus, Loki, Promtail, Grafana, Grafana MCP server |
@@ -185,17 +202,16 @@ uv pip install -e ".[dev]"
 cp .env.example .env   # then edit: OPENROUTER_API_KEY, SLACK_WEBHOOK_URL, ...
 ```
 
-`docker-compose.yaml` pulls in three additional files:
+`docker-compose.yaml` pulls in four additional files:
 
 - `docker-prefect.yaml` — Prefect server, Postgres, Redis, a Prefect worker
   (`local-pool`), and a Prometheus exporter.
-- `docker-data.yaml` — SeaweedFS (S3 gateway on `:8333`) and ClickHouse (`:8123`),
+- `docker-data.yaml` — SeaweedFS (S3 gateway on `:8333`) and ClickHouse (`:8125` on host),
   used by the data pipeline for raw object storage and the mart.
-- `docker-observation.yaml` — Prometheus, Loki, Promtail, Grafana, the Grafana MCP
-  server (exposed on `:8000`), and ClickHouse.
-
-A separate `docker-langgraph.yaml` provides the LangGraph API server with its own
-Redis, Postgres, and the agent memory database (Postgres on `:5433`).
+- `docker-observation.yaml` — Prometheus, Loki, Promtail, Grafana, and the Grafana MCP
+  server (exposed on `:8000`).
+- `docker-langgraph.yaml` — LangGraph API server, Redis, Postgres, and the agent memory
+  database (Postgres on `:5433`).
 
 ## Running locally
 
@@ -206,17 +222,18 @@ docker compose -f docker-data.yaml up -d
 ```
 
 This brings up **SeaweedFS** (S3 gateway on `:8333`, Filer UI on `:8888`) and
-**ClickHouse** (`:8123`).
+**ClickHouse** (`:8125` on host, `:8123` in container).
 
 ### 2. Start the observability + orchestration stack
 
 ```bash
-docker compose up -d   # docker-prefect.yaml + docker-data.yaml + docker-observation.yaml
+docker compose up -d   # docker-prefect.yaml + docker-data.yaml + docker-observation.yaml + docker-langgraph.yaml
 ```
 
 That brings up Prefect (UI on `http://localhost:4200`), Grafana
 (`http://localhost:3000`, admin/admin), Prometheus (`:9090`), ClickHouse
-(`:8123`), and the Grafana MCP server (`:8000`).
+(`:8125`), the Grafana MCP server (`:8000`), and the LangGraph API server
+(`:8123`).
 
 ### 3. Start the LangGraph agent stack (optional, agent only)
 
@@ -226,7 +243,6 @@ docker compose -f docker-langgraph.yaml up -d
 
 This starts the LangGraph API server, Redis, a Postgres for LangGraph state, and
 a Postgres for the agent incident memory database (`agent-memory` on `:5433`).
-Required only if you run the monitoring agent with incident memory.
 
 ### 4. Start the LangGraph agent server (alternative, dev mode)
 
@@ -265,6 +281,8 @@ Key environment variables (see `.env`):
 | `SEAWEEDFS_BUCKET` | `raw` | S3 bucket for raw payloads |
 | `OPENROUTER_API_KEY` | — | Required only for the LangGraph monitoring agent |
 | `GRAFANA_SERVICE_ACCOUNT_TOKEN` | — | Token for the Grafana MCP server (agent only) |
+| `GRAFANA_MCP_URL` | `http://localhost:8000/mcp` | Grafana MCP server URL |
+| `LLM_MODEL` | `deepseek/deepseek-v4-flash` | LLM model to use for analysis |
 | `DATABASE_URL` | `postgresql+asyncpg://agent:agent@localhost:5433/agent_memory` | Postgres DSN for the agent incident memory store |
 | `LANGSMITH_API_KEY` | — | LangSmith tracing API key |
 | `LANGSMITH_TRACING` | `true` | Enable LangSmith tracing |
@@ -278,7 +296,23 @@ The LangGraph agent retries are capped at `MAX_RETRIES = 2`
 (`src/graphs/monitoring.py`). Incident memory lookup and save use a PostgreSQL
 database (`agent-memory`) managed via `src/memory/store.py`.
 
+## Docker images
+
+Pre-built images are published to GitHub Container Registry:
+
+| Image | Purpose |
+| --- | --- |
+| `ghcr.io/racenak/agent-data-pipeline-langgraph-api:latest` | LangGraph agent API server |
+| `ghcr.io/racenak/agent-data-pipeline-prefect-worker:latest` | Prefect worker with ETL dependencies |
+
+Build `Dockerfile.langgraph-api` installs only the agent dependencies
+(`langchain-mcp-adapters`, `langchain-openrouter`, `asyncpg`, `python-dotenv`,
+`pyyaml`). The ETL pipeline dependencies (Prefect, ClickHouse, boto3, Great
+Expectations, pandas) are not included in this image.
+
 ## Monitoring & alerting
+
+![LangSmith Monitoring](media/monitoring_langsmith.png)
 
 The agent emits a Slack attachment per analysis with severity (`CRITICAL` /
 `WARNING`), error summary, root cause, and suggested fixes. Grafana dashboards
@@ -304,7 +338,13 @@ mypy .
 
 ## CI
 
-`.github/workflows/build-worker.yaml` builds and pushes the Prefect worker image
-(`Dockerfile.prefect-worker`) to GitHub Container Registry on pushes to the
-`data-pipeline` branch (affecting the Dockerfile) or PRs to `main`. A
-`workflow_dispatch` trigger is also available for manual runs.
+Two GitHub Actions workflows build and push Docker images to GitHub Container
+Registry with BuildKit layer caching (`type=gha`):
+
+| Workflow | Trigger | What it builds |
+| --- | --- | --- |
+| `build-agent.yaml` | Pushes to `main`/`lang-graph` affecting `src/**`, `Dockerfile.langgraph-api`, or the workflow itself; PRs to `main` | `Dockerfile.langgraph-api` → LangGraph agent image |
+| `build-worker.yaml` | Pushes to `data-pipeline` affecting `Dockerfile.prefect-worker`; PRs to `main` | `Dockerfile.prefect-worker` → Prefect worker image |
+
+Both workflows use `docker/build-push-action@v6` with GHA cache and
+`docker/metadata-action@v5` for consistent tagging (`latest` + commit SHA).
