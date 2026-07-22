@@ -73,9 +73,9 @@ extract → load_raw_to_seaweedfs → schema_validation (GE)
                                                  └─ PASS → merge_to_mart → send_slack(INFO)
 ```
 
-![Prefect Overview](media/prefect_overview.png)
-
 ![Prefect Flow](media/prefect_flow.png)
+
+![Prefect Overview](media/prefect_overview.png)
 
 ![Prefect Flow Run](media/prefect_each_run.png)
 
