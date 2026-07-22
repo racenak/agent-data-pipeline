@@ -285,25 +285,38 @@ def send_slack(message: str, severity: str = "INFO"):
 @flow(name="User ETL Pipeline Blueprint")
 def main_etl_flow():
     """Agent-free data pipeline: extract -> raw store -> validate -> transform -> load -> DQ -> mart."""
-    raw_users = extract_users()
-    load_raw_to_seaweedfs(raw_users)
+    raw = extract_users.submit()
 
-    schema = schema_validation(raw_users)
-    if not schema["passed"]:
-        send_slack(f"Schema validation FAILED:\n{schema['report']}", "CRITICAL")
-        return
+    seaweed = load_raw_to_seaweedfs.submit(raw)
 
-    clean_users = transform_users(raw_users)
-    load_staging_clickhouse(clean_users)
+    schema = schema_validation.submit(
+        raw,
+        wait_for=[seaweed]
+    )
 
-    dq = data_quality_validation(clean_users)
-    if not dq["passed"]:
-        send_slack(f"Data quality validation FAILED:\n{dq['report']}", "CRITICAL")
-        return
+    clean = transform_users.submit(
+        raw,
+        wait_for=[schema]
+    )
 
-    merge_to_mart()
-    send_slack(
-        f"Pipeline succeeded: {len(clean_users)} records merged into mart.", "INFO"
+    stage = load_staging_clickhouse.submit(
+        clean,
+        wait_for=[clean]
+    )
+
+    dq = data_quality_validation.submit(
+        clean,
+        wait_for=[stage]
+    )
+
+    mart = merge_to_mart.submit(
+        wait_for=[dq]
+    )
+
+    send_slack.submit(
+        "Pipeline succeeded",
+        "INFO",
+        wait_for=[mart],
     )
 
 
